@@ -117,8 +117,14 @@ def front(pb_name):
 
 def back(pb_name):
     with open(os.path.join('pb', pb_name), "rb") as f:
+        np.random.seed(0)
+        tf.set_random_seed(0)
         test = onnx.load(f)
-        rs = run_model(test, [np.random.randn(5, 1, 3)])
+        # rs = run_model(test, [np.random.randn(10, 784)])
+        rs = run_model(test,
+                       [np.random.randn(5, 1, 3),
+                        np.random.randn(1, 1, 3),
+                        np.random.randn(1, 1, 3)])
         print(rs)
         pass
 

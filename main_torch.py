@@ -13,7 +13,7 @@ import numpy as np
 import os
 from onnx_tf.backend import run_model
 
-torch.manual_seed(1)
+# torch.manual_seed(1)
 
 
 class Net(nn.Module):
@@ -54,33 +54,32 @@ def export_pytorch():
     testloader = torch.utils.data.DataLoader(testset, batch_size=4,
                                              shuffle=False, num_workers=2)
 
-    # for epoch in range(2):  # loop over the dataset multiple times
-    #   continue
-    #   running_loss = 0.0
-    #   for i, data in enumerate(trainloader):
-    #
-    #     # get the inputs
-    #     inputs, labels = data
-    #
-    #     # wrap them in Variable
-    #     inputs, labels = Variable(inputs), Variable(labels)
-    #
-    #     # zero the parameter gradients
-    #     optimizer.zero_grad()
-    #
-    #     # forward + backward + optimize
-    #     outputs = model(inputs)
-    #
-    #     loss = criterion(outputs, labels)
-    #     loss.backward()
-    #     optimizer.step()
-    #
-    #     # print statistics
-    #     running_loss += loss.data[0]
-    #     if i % 2000 == 1999:  # print every 2000 mini-batches
-    #       print('[%d, %5d] loss: %.3f' %
-    #             (epoch + 1, i + 1, running_loss / 2000))
-    #       running_loss = 0.0
+    for epoch in range(1):  # loop over the dataset multiple times
+      running_loss = 0.0
+      for i, data in enumerate(trainloader):
+
+        # get the inputs
+        inputs, labels = data
+
+        # wrap them in Variable
+        inputs, labels = Variable(inputs), Variable(labels)
+
+        # zero the parameter gradients
+        optimizer.zero_grad()
+
+        # forward + backward + optimize
+        outputs = model(inputs)
+
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        # print statistics
+        running_loss += loss.data[0]
+        if i % 2000 == 1999:  # print every 2000 mini-batches
+          print('[%d, %5d] loss: %.3f' %
+                (epoch + 1, i + 1, running_loss / 2000))
+          running_loss = 0.0
 
     # export onnx model
     dummy_input = Variable(torch.randn(1, 3, 32, 32))
@@ -158,4 +157,4 @@ hidden = (autograd.Variable(torch.randn(1, 1, 3)), autograd.Variable(
 out, hidden = lstm(inputs, hidden)
 print(out)
 print(hidden)
-torch.onnx.export(lstm, (inputs, hidden), "lstm.onnx", verbose=True)
+# torch.onnx.export(lstm, (inputs, hidden), "lstm.onnx", verbose=True)
