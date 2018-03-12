@@ -41,7 +41,8 @@ def timeit(method):
 
 def cnn_model_fn(input):
     """Model function for CNN."""
-    input_layer = tf.reshape(tensor=input, shape=[-1, 28, 28, 1])
+    # input_layer = tf.reshape(tensor=input, shape=[-1, 28, 28, 1])
+    input_layer = tf.reshape(tensor=input, shape=[-1, 1, 28, 28])
 
     x = tf.layers.conv2d(
         inputs=input_layer,
@@ -97,7 +98,7 @@ def run():
             sess.graph.as_graph_def(add_shapes=True),
             ['output'],
         )
-        tf.train.write_graph(minimal_graph, 'pb', 'test_2.pb', as_text=False)
+        tf.train.write_graph(minimal_graph, 'pb', 'tf_test.pb', as_text=False)
 
 
 @timeit
@@ -120,11 +121,11 @@ def back(pb_name):
         np.random.seed(0)
         tf.set_random_seed(0)
         test = onnx.load(f)
-        # rs = run_model(test, [np.random.randn(10, 784)])
-        rs = run_model(test,
-                       [np.random.randn(5, 1, 3),
-                        np.random.randn(1, 1, 3),
-                        np.random.randn(1, 1, 3)])
+        rs = run_model(test, [np.random.randn(10, 784)])
+        # rs = run_model(test,
+        #                [np.random.randn(5, 1, 3),
+        #                 np.random.randn(1, 1, 3),
+        #                 np.random.randn(1, 1, 3)])
         print(rs)
         pass
 
@@ -162,8 +163,8 @@ def test(suffix):
 @click.option(
     '-c',
     '--command',
-    type=click.Choice(['front', 'back', 'test']),
-    help='Choose the command from front, back, test.',
+    type=click.Choice(['front', 'back', 'test', 'run']),
+    help='Choose the command from front, back, test, run.',
 )
 @click.option(
     '-args',
