@@ -1,7 +1,9 @@
 import os
 
+import numpy as np
 import onnx
-import onnx_caffe2.backend
+from onnx import helper
+from caffe2.python.onnx import backend
 import tensorflow as tf
 from tensorflow.python.platform import gfile
 from onnx_tf.frontend import convert_graph
@@ -10,12 +12,21 @@ from onnx_tf.backend import run_model
 import numpy as np
 
 def test():
-  input = np.random.randn(10, 784)
+  input = np.random.randn(1, 3, 32, 32)
 
-  model = onnx.load('pb/onnx_gh_mnist.pb')
-  outputs = onnx_caffe2.backend.run_model(model, [input])
+  model = onnx.load('pb/onnx_lmnet_cifar10_nchw.pb')
+  # outputs_tf = run_model(model, [input])
+  node_def = helper.make_node("Reshape", ["X"], ["Y"], shape=[10, 10])
+  x = np.random.randn(100)
+  output = backend.run_node(node_def, [x])
+  print(output)
 
-  print(outputs)
+  outputs_caffe2 = backend.run_model(model, [input])
+
+  print(outputs_caffe2)
+  # print(outputs_tf)
+
+  print(np.allclose(outputs_caffe2, outputs_tf, rtol=1e-3))
 
   # tf_graph = 'tf_gh_minst.pb'
   #
