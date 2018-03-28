@@ -5,19 +5,12 @@ from __future__ import print_function
 import os
 import tensorflow as tf
 import numpy as np
-import sys
 from tensorflow.python.platform import gfile
-from tensorflow.core.protobuf import saved_model_pb2
-from tensorflow.python.util import compat
-from google.protobuf import json_format
-from google.protobuf.json_format import MessageToJson
-from tensorflow.core.framework import graph_pb2, node_def_pb2
-from google.protobuf import text_format
+from tensorflow.core.framework import graph_pb2
 from onnx_tf.frontend import convert_graph
 from onnx_tf.backend import run_model
-import pathlib
-from tensorflow.python.framework import graph_io
-from onnx.helper import make_model
+from onnx.helper import make_model, make_opsetid
+import onnx.checker as checker
 import onnx
 import ssl
 import time
@@ -51,7 +44,8 @@ def cnn_model_fn(input):
         strides=2,
         padding="SAME",
         use_bias=False,
-        activation=tf.nn.relu)
+        activation=tf.nn.relu,
+        data_format='channel_first')
 
     x = tf.layers.conv2d(
         inputs=x,
@@ -60,7 +54,8 @@ def cnn_model_fn(input):
         strides=2,
         padding="SAME",
         use_bias=False,
-        activation=tf.nn.relu)
+        activation=tf.nn.relu,
+        data_format='channel_first')
 
     # x = tf.contrib.layers.flatten(x)
     x = tf.reshape(x, (-1, 980))
@@ -98,7 +93,7 @@ def run():
             sess.graph.as_graph_def(add_shapes=True),
             ['output'],
         )
-        tf.train.write_graph(minimal_graph, 'pb', 'tf_test.pb', as_text=False)
+        tf.train.write_graph(minimal_graph, 'pb', 'tf_gh_mnist_nchw.pb', as_text=False)
 
 
 @timeit
@@ -109,8 +104,13 @@ def front(pb_name):
         graph_def.ParseFromString(f.read())
         node_def = graph_def.node[-1]
 
-    onnx_gh_def = convert_graph(graph_def, node_def)
-    model = make_model(onnx_gh_def)
+    _opset = 4
+    onnx_gh_def = convert_graph(graph_def, node_def, opset=_opset)
+    ctx = checker.DEFAULT_CONTEXT
+    ctx.opset_imports = {'': _opset}
+    checker.check_graph(onnx_gh_def, ctx=ctx)
+    opsetid = make_opsetid('', _opset)
+    model = make_model(onnx_gh_def, opset_imports=[opsetid])
     f = open(os.path.join('pb', pb_name).replace('tf', 'onnx'), 'wb')
     f.write(model.SerializeToString())
     f.close()
@@ -121,7 +121,8 @@ def back(pb_name):
         np.random.seed(0)
         tf.set_random_seed(0)
         test = onnx.load(f)
-        rs = run_model(test, [np.random.randn(10, 784)])
+        # rs = run_model(test, [np.random.randn(10, 784)])
+        rs = run_model(test, [np.random.randn(1, 5, 5, 3)])
         # rs = run_model(test,
         #                [np.random.randn(5, 1, 3),
         #                 np.random.randn(1, 1, 3),
