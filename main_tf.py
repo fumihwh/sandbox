@@ -7,10 +7,12 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.python.platform import gfile
 from tensorflow.core.framework import graph_pb2
-from onnx_tf.frontend import convert_graph
+from onnx_tf.frontend import tensorflow_graph_to_onnx_model
 from onnx_tf.backend import run_model
 from onnx.helper import make_model, make_opsetid
+import onnx.optimizer
 import onnx.checker as checker
+import onnx.defs as defs
 import onnx
 import ssl
 import time
@@ -103,17 +105,24 @@ def front(pb_name):
     with open(os.path.join('pb', pb_name), "rb") as f:
         graph_def.ParseFromString(f.read())
         node_def = graph_def.node[-1]
-
-    _opset = 4
-    onnx_gh_def = convert_graph(graph_def, node_def, opset=_opset)
-    ctx = checker.DEFAULT_CONTEXT
-    ctx.opset_imports = {'': _opset}
-    checker.check_graph(onnx_gh_def, ctx=ctx)
-    opsetid = make_opsetid('', _opset)
-    model = make_model(onnx_gh_def, opset_imports=[opsetid])
+    # _opset = 6
+    # defs.ONNX_DOMAIN = 'io.leapmind'
+    # defs.get_all_schemas_with_history()
+    # model = tensorflow_graph_to_onnx_model(graph_def, node_def.name, opset=_opset)
+    model = tensorflow_graph_to_onnx_model(graph_def, node_def.name)
+    # ctx = checker.DEFAULT_CONTEXT
+    # ctx.opset_imports = {'': _opset, 'io.leapmind': 1}
+    checker.check_graph(model.graph)
     f = open(os.path.join('pb', pb_name).replace('tf', 'onnx'), 'wb')
     f.write(model.SerializeToString())
     f.close()
+
+
+def optimize(pb_name):
+    model = onnx.load(os.path.join('pb', pb_name))
+    # new_model_str = onnx.optimizer.optimize(model, ["fuse_add_bias_into_conv"])
+    new_model_str = onnx.optimizer.optimize(model, ["eliminate_identity"])
+    onnx.save(new_model_str, 'pb/' + pb_name.replace('onnx', 'onnx_opt'))
 
 
 def back(pb_name):
@@ -164,8 +173,8 @@ def test(suffix):
 @click.option(
     '-c',
     '--command',
-    type=click.Choice(['front', 'back', 'test', 'run']),
-    help='Choose the command from front, back, test, run.',
+    type=click.Choice(['front', 'back', 'test', 'run', 'optimize']),
+    help='Choose the command from front, back, test, run, optimize.',
 )
 @click.option(
     '-args',

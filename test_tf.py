@@ -2,11 +2,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow as tf
 import numpy as np
-from onnx_tf.backend import run_model, run_node
-import onnx
+from onnx_tf.backend import run_node
+from onnx import helper
 import itertools
+import tensorflow as tf
 
 def get_pad_shape(auto_pad, input_spatial_shape, kernel_spatial_shape, strides_spatial, output_spatial_shape):
   pad_shape = [0] * len(input_spatial_shape)
@@ -48,105 +48,67 @@ def pool(padded, x_shape, kernel_shape, strides_shape, out_shape, pad_shape):
     y[shape] = average
   return y.astype(np.float32)
 
-# node = onnx.helper.make_node(
-#   'AveragePool',
-#   inputs=['x'],
-#   outputs=['y'],
-#   kernel_shape=[5, 5],
-#   strides=[3, 3]
-# )
-# x = np.random.randn(1, 3, 32, 32).astype(np.float32)
-# x_shape = np.shape(x)
-# kernel_shape = (5, 5)
-# strides = (3, 3)
-# out_shape = get_output_shape('VALID', x_shape[2:], kernel_shape, strides)
-# padded = x
-# y = pool(padded, x_shape, kernel_shape, strides, out_shape, (0, 0))
-# sess = tf.InteractiveSession()
-# x = np.transpose(x, (0, 2, 3, 1))
-# # x = np.transpose(x, (0, 2, 1))
-# tensor_x = tf.convert_to_tensor(x, np.float32)
-# rs = tf.nn.avg_pool(tensor_x, ksize=[1, 5, 5, 1], strides=[1, 3, 3, 1], padding='VALID')
-# _rs = sess.run(rs)
-# print(_rs)
-
-# node = onnx.helper.make_node(
-#   'AveragePool',
-#   inputs=['x'],
-#   outputs=['y'],
-#   kernel_shape=[5, 5],
-#   strides=[2, 2],
-# )
-# x = np.array([[[
-#   [1, 2, 3, 4, 5],
-#   [6, 7, 8, 9, 10],
-#   [11, 12, 13, 14, 15],
-#   [16, 17, 18, 19, 20],
-#   [21, 22, 23, 24, 25],
-# ]]]).astype(np.float32)
-# x_shape = (1, 1, 5, 5)
-# kernel_shape = (5, 5)
-# strides = (1, 1)
-# # out_shape = (3, 3)
-# out_shape = get_output_shape('VALID', [9, 9], kernel_shape, strides)
-# padded = np.pad(x, ((0, 0), (0, 0), (2, 2), (2, 2)), mode='constant', constant_values=np.nan)
-# y = pool(padded, x_shape, kernel_shape, strides, out_shape, (4, 4))
-
-# x_shape = (1, 1, 5, 5)
-# kernel_shape = (2, 2)
-# strides = (2, 2)
-# out_shape = (4, 4)
-# padded = x
-# y = pool(padded, x_shape, kernel_shape, strides, out_shape, (0, 0))
-# print(y)
-
-
-node = onnx.helper.make_node(
-  'AveragePool',
-  inputs=['x'],
-  outputs=['y'],
-  kernel_shape=[3, 3],
-  pads=[2, 2, 2, 2]
-)
-x = np.random.randn(1, 3, 28, 28).astype(np.float32)
-x_shape = np.shape(x)
-kernel_shape = (3, 3)
-strides = (1, 1)
-pad_bottom = 2
-pad_top = 2
-pad_right = 2
-pad_left = 2
-pad_shape = [pad_top + pad_bottom, pad_left + pad_right]
-out_shape = get_output_shape('VALID', np.add(x_shape[2:], pad_shape), kernel_shape, strides)
-padded = np.pad(x, ((0, 0), (0, 0), (pad_top, pad_bottom), (pad_left, pad_right)), mode='constant',
-                constant_values=np.nan)
-y = pool(padded, x_shape, kernel_shape, strides, out_shape, pad_shape)
-
-sess = tf.InteractiveSession()
-# x = np.random.randn(1, 32, 32, 3).astype(np.float32)
-x = np.transpose(x, (0, 2, 3, 1))
-# x = np.transpose(x, (0, 2, 1))
-tensor_x = tf.convert_to_tensor(x, np.float32)
-# l2 = tf.norm(tensor_x)
-# rs = tf.depth_to_space(tensor_x, block_size=2)
-# mean, variance = tf.nn.moments(x, [0])
-# tf.nn.batch_normalization(x, mean, variance, None, None, 1e-5)
-rs = tf.nn.avg_pool(tensor_x, ksize=[1, 2, 2, 1], strides=[1, 1, 1, 1], padding='SAME')
-# rs = tf.nn.pool(tensor_x, window_shape=[2], strides=[1], padding='VALID', pooling_type='AVG')
-# # v_rs = tf.nn.avg_pool(tensor_x, ksize=[1, 5, 5, 1], strides=[1, 3, 3, 1], padding='VALID')
-# tf_rs = sess.run(rs)
-# # tf_v_rs = sess.run(v_rs)
+# with tf.Graph().as_default() as graph:
+#   # x = tf.Variable(np.random.randint(10, size=(1, 5, 5, 3)), dtype=tf.float32)
+#   input = tf.placeholder(dtype=tf.float32, shape=(1, 5, 5, 3), name='ph')
+#   x = tf.layers.conv2d(input,
+#                        filters=16,
+#                        kernel_size=3,
+#                        padding='SAME',
+#                        use_bias=False,
+#                        name='conv_ly')
+#   bias = tf.get_variable('bias', shape=(16,), initializer=tf.random_uniform_initializer)
+#   x = tf.nn.bias_add(x, bias, data_format='NHWC', name='biasadd')
+#   output = x * bias
+#   output = tf.identity(output, name='output')
 #
-# # print(np.shape(np_rs))
-# # print(np.shape(tf_rs))
-# # print(np.shape(tf_v_rs))
-# #
-# # print(np.allclose(np.transpose(y, (0, 2, 3, 1)), tf_v_rs, rtol=1e-3))
-# print(np.allclose(np.transpose(y, (0, 2, 1)), tf_rs, rtol=1e-3))
+#   sess = tf.Session(graph=graph)
+#   sess.run(tf.global_variables_initializer())
+#   _rs = sess.run(x, feed_dict={input: np.random.randn(1, 5, 5, 3)})
+#   print(_rs)
+#   minimal_graph = tf.graph_util.convert_variables_to_constants(
+#     sess,
+#     sess.graph.as_graph_def(add_shapes=True),
+#     ['output'],
+#   )
+#   tf.train.write_graph(minimal_graph, 'pb', 'tf_conv_new.pb', as_text=False)
 
-# a = tf.constant([[1, 2, 3], [4, 5, 6]], name='a')
-# b = tf.constant([[100], [101],], name='b')
-# add_op = a + b
+# node_def = helper.make_node("Relu", ["X"], ["Y"])
+# output = run_node(node_def, [[-0.1, 0.1]])
+# print(output["Y"])
+# import onnx
 #
-_rs = sess.run(rs)
-print(np.transpose(_rs, (0, 3, 1, 2)))
+# from onnx import checker, helper, TensorProto
+#
+# conv = helper.make_node("Conv", ["X", "Y"], ["Z"])
+# add = helper.make_node("Add", ["Z", "A"], ["B"], broadcast=1, axis=1)
+# graph = helper.make_graph(
+#   [conv, add],
+#   "test",
+#   [helper.make_tensor_value_info("X", TensorProto.FLOAT, (1, 5, 3, 3)),
+#    helper.make_tensor_value_info("Y", TensorProto.FLOAT, (16, 5, 3, 3)),
+#    helper.make_tensor_value_info("A", TensorProto.FLOAT, (16,))],
+#   [helper.make_tensor_value_info("B", TensorProto.FLOAT, (1, 16, 1, 1))],
+#   value_info=[
+#     helper.make_tensor_value_info("Z", TensorProto.FLOAT, (1, 16, 1, 1)),
+#   ]
+# )
+#
+# model = helper.make_model(graph)
+# onnx.save(model, 'pb/onnx_conv_1d.pb')
+
+with tf.Graph().as_default() as graph:
+  # x = tf.Variable(np.random.randint(10, size=(1, 5, 5, 3)), dtype=tf.float32)
+  input = tf.placeholder(dtype=tf.float32, shape=(1, 128, 128, 3), name='ph')
+  x = tf.image.resize_nearest_neighbor(input, (100, 100))
+  output = tf.identity(x, name='output')
+  sess = tf.Session(graph=graph)
+  sess.run(tf.global_variables_initializer())
+  _rs = sess.run(x, feed_dict={input: np.random.randn(1, 128, 128, 3)})
+  print(_rs)
+  minimal_graph = tf.graph_util.convert_variables_to_constants(
+    sess,
+    sess.graph.as_graph_def(add_shapes=True),
+    ['output'],
+  )
+  tf.train.write_graph(minimal_graph, 'pb', 'tf_resize.pb', as_text=False)
