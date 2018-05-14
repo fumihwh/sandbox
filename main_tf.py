@@ -47,7 +47,7 @@ def cnn_model_fn(input):
         padding="SAME",
         use_bias=False,
         activation=tf.nn.relu,
-        data_format='channel_first')
+        data_format='channels_first')
 
     x = tf.layers.conv2d(
         inputs=x,
@@ -57,7 +57,7 @@ def cnn_model_fn(input):
         padding="SAME",
         use_bias=False,
         activation=tf.nn.relu,
-        data_format='channel_first')
+        data_format='channels_first')
 
     # x = tf.contrib.layers.flatten(x)
     x = tf.reshape(x, (-1, 980))
@@ -69,8 +69,8 @@ def cnn_model_fn(input):
 
 def run():
     with tf.Graph().as_default():
-        data_placeholder = tf.placeholder(name='input_ph', shape=[None, 784], dtype=tf.float32)
-        label_placeholder = tf.placeholder(name='label_ph', shape=[None, ], dtype=tf.int32)
+        data_placeholder = tf.placeholder(name='input_ph', shape=[50, 784], dtype=tf.float32)
+        label_placeholder = tf.placeholder(name='label_ph', shape=[50, ], dtype=tf.int32)
         logits = cnn_model_fn(data_placeholder)
 
         loss = tf.losses.sparse_softmax_cross_entropy(labels=label_placeholder, logits=logits)
@@ -96,6 +96,7 @@ def run():
             ['output'],
         )
         tf.train.write_graph(minimal_graph, 'pb', 'tf_gh_mnist_nchw.pb', as_text=False)
+        # tf.train.write_graph(minimal_graph, 'pb', 'tf_gh_mnist.pb', as_text=False)
 
 
 @timeit
@@ -109,7 +110,7 @@ def front(pb_name):
     # defs.ONNX_DOMAIN = 'io.leapmind'
     # defs.get_all_schemas_with_history()
     # model = tensorflow_graph_to_onnx_model(graph_def, node_def.name, opset=_opset)
-    model = tensorflow_graph_to_onnx_model(graph_def, node_def.name)
+    model = tensorflow_graph_to_onnx_model(graph_def, node_def.name, ignore_unimplemented=True)
     # ctx = checker.DEFAULT_CONTEXT
     # ctx.opset_imports = {'': _opset, 'io.leapmind': 1}
     checker.check_graph(model.graph)
