@@ -1,0 +1,294 @@
+import collections
+
+import numpy as np
+import onnx
+from onnx import ValueInfoProto
+from onnx.helper import make_node, make_graph, make_model, make_empty_tensor_value_info, make_tensor, \
+  make_tensor_value_info
+from onnx.numpy_helper import to_array
+
+from utils.post_processor import post_process
+
+
+def get_input_output_node_names(nodes, init_dict):
+  """Get input and output node names by given nodes.
+
+  Args:
+    nodes:
+
+  Returns:
+    Input node names.
+    Output node names.
+  """
+  input_names_list = []
+  output_names_list = []
+  kernel_and_bias_list = []
+  extension_output_names = set()
+  for node in nodes:
+    output_names_list.extend(node.output)
+    # for inp in node.input:
+    #   if inp and inp not in init_dict:
+    #     if inp[0] != "^":
+    #       inp_ = inp
+    #     else:
+    #       inp_ = inp[1:]
+    #     if "new__" in inp_:
+    #       inp_ = inp_.replace("new__", "")
+    #     input_names_list.append(inp_)
+    input_names_list.extend([
+        inp if inp[0] != "^" else inp[1:]
+        for inp in node.input
+        if inp and inp not in init_dict
+    ])
+  inputs = set(input_names_list) - set(output_names_list)
+  outputs = set(output_names_list) - set(input_names_list)
+  while extension_output_names:
+    ext_names = extension_output_names.pop()
+    for name in ext_names:
+      if name in outputs:
+        outputs -= set(ext_names)
+        break
+  inputs.discard(None)
+  return [
+      x
+      for _, x in sorted(zip(list(map(input_names_list.index, inputs)), inputs))
+  ], [
+      x for _, x in sorted(
+          zip(list(map(output_names_list.index, outputs)), outputs))
+  ]
+
+
+class LoopParser:
+
+  def __init__(self):
+    self.loop_num_count = 0
+    pass
+
+  def parse(self, model):
+    nodes = model.graph.node
+    node_dict = {}
+    for n in nodes:
+      for o in n.output:
+        node_dict[o] = n
+    pre, loop, post = [], [], []
+    merges = []
+    switches = []
+    next_iterations = []
+    exits = []
+    exit_hit = False
+    for i, n in enumerate(nodes):
+      if pre:
+        if n.op_type == "Exit":
+          exit_hit = True
+          exits.append(n)
+        if exit_hit and n.op_type != "Exit":
+          post = nodes[i:]
+          break
+        loop.append(n)
+      if n.op_type == "LoopCond":
+        if exit_hit:
+          break
+        pre = nodes[:i]
+        loop.append(n)
+    for n in loop:
+      if n.op_type == "Switch" and loop[0].output[0] in list(n.input):
+        switches.append(n)
+      if n.op_type == "NextIteration":
+        next_iterations.append(n)
+
+    merge_hit = False
+    cond_logic = []
+    for n in pre[::-1]:
+      if n.op_type == "Merge":
+        merge_hit = True
+        merges.insert(0, n)
+        loop.insert(1, n)
+      if merge_hit and n.op_type != "Merge":
+        break
+      if not merge_hit:
+        cond_logic.insert(0, n)
+
+    value = np.array(True)
+    shape = value.shape
+
+    cond = loop[0]
+    max_trip_count = ""
+
+    outputs = []
+    exits_in_out_map = {}
+    for e in exits:
+      exits_in_out_map[e.input[0]] = e.output[0]
+      loop.remove(e)
+    for n in switches:
+      if n.output[0] in exits_in_out_map:
+        outputs.append(exits_in_out_map[n.output[0]])
+      else:
+        outputs.append(n.output[0])
+
+    cond_logic_to_loop = []
+    for n in cond_logic:
+      new_n = onnx.NodeProto()
+      new_n.CopyFrom(n)
+      cond_logic_to_loop.append(new_n)
+
+    merges_dict = {n.name: n for n in merges}
+    switches_dict = {n.name: n for n in switches}
+    next_iterations_dict = {n.name: n for n in next_iterations}
+
+    loop.remove(cond)
+    loop_graph = self.make_loop_graph(loop, cond_logic_to_loop, merges_dict,
+                                      switches_dict, next_iterations_dict,
+                                      model)
+    loop_inputs = [max_trip_count] + list(
+        cond.input) + [i.name for i in loop_graph.input][2:]
+    loop_outputs = outputs + [
+        "unused__{}".format(i)
+        for i in [i.name for i in loop_graph.output][1 + len(outputs):]
+    ]
+    loop_node = make_node("Loop", loop_inputs, loop_outputs, body=loop_graph)
+
+    new_nodes = pre + [loop_node] + post
+
+    for n in merges:
+      new_nodes.remove(n)
+
+    for n in new_nodes:
+      inputs = list(n.input)
+      for idx, i in enumerate(inputs):
+        if i in merges_dict:
+          inputs[idx] = merges_dict[i].input[0]
+      n.ClearField("input")
+      n.input.extend(inputs)
+
+    model.graph.ClearField("node")
+    model.graph.node.extend(new_nodes)
+    return model
+
+  def make_loop_graph(self, loop, cond_logic_to_loop, merges_dict,
+                      switches_dict, next_iterations_dict, ori_model):
+    init_dict = {i.name: i for i in ori_model.graph.initializer}
+    vi_dict = {i.name: i for i in ori_model.graph.value_info}
+
+    cond_tensor = cond_logic_to_loop[-1].output.pop(0)
+    cond_logic_to_loop[-1].output.append("new__condition")
+
+    loop = cond_logic_to_loop + loop
+
+    node_by_inputs = collections.defaultdict(list)
+    node_by_outputs = {}
+    for n in loop:
+      for i in n.input:
+        node_by_inputs[i].append(n)
+      for i in n.output:
+        node_by_outputs[i] = n
+
+    loop_inputs = []
+    loop_outputs = []
+    loop_inputs_no_change = []
+    for mk, sk, nk in zip(merges_dict, switches_dict, next_iterations_dict):
+      input_no_change = False
+
+      m = merges_dict[mk]
+      s = switches_dict[sk]
+      n = next_iterations_dict[nk]
+
+      if n.input[0] not in s.output:
+        o = node_by_outputs[n.input[0]]
+        o_outputs = list(o.output)
+        o_outputs[o_outputs.index(n.input[0])] = "new__{}".format(m.input[0])
+        for o_child in node_by_inputs[n.input[0]]:
+          o_child_inputs = list(o_child.input)
+          o_child_inputs[o_child_inputs.index(n.input[0])] = "new__{}".format(
+              m.input[0])
+          o_child.ClearField("input")
+          o_child.input.extend(o_child_inputs)
+        o.ClearField("output")
+        o.output.extend(o_outputs)
+      else:
+        input_no_change = True
+
+      for s_child in node_by_inputs[s.output[1]]:
+        s_child_inputs = list(s_child.input)
+        s_child_inputs[s_child_inputs.index(s.output[1])] = m.input[0]
+        s_child.ClearField("input")
+        s_child.input.extend(s_child_inputs)
+
+      for m_child in node_by_inputs[m.output[0]]:
+        if m_child.op_type == "Switch":
+          continue
+        m_child_inputs = list(m_child.input)
+        m_child_inputs[m_child_inputs.index(m.output[0])] = m.input[0]
+        m_child.ClearField("input")
+        m_child.input.extend(m_child_inputs)
+
+      loop_inputs.append(m.input[0])
+      loop_outputs.append("new__{}".format(m.input[0])
+                          if input_no_change is False else m.input[0])
+      loop.remove(m)
+      loop.remove(s)
+      loop.remove(n)
+
+    inputs, _ = get_input_output_node_names(loop, init_dict)
+    external_inputs = [i for i in inputs if i not in loop_inputs]
+
+    loop_i_vi = make_tensor_value_info("iteration_num", onnx.TensorProto.INT64,
+                                       ())
+    cond_vi = ValueInfoProto()
+    cond_vi.MergeFrom(vi_dict[cond_tensor])
+    cond_vi.name = "condition"
+
+    inputs_vi = [loop_i_vi, cond_vi]
+    for i in loop_inputs + external_inputs:
+      if i and i in vi_dict:
+        input_vi = vi_dict[i]
+      elif i and i in init_dict:
+        i_init = init_dict[i]
+        i_init_array = to_array(i_init)
+        input_vi = make_tensor_value_info(i_init.name, i_init.data_type,
+                                          i_init_array.shape)
+      else:
+        input_vi = make_empty_tensor_value_info(i)
+      inputs_vi.append(input_vi)
+
+    new_cond_vi = ValueInfoProto()
+    new_cond_vi.MergeFrom(vi_dict[cond_tensor])
+    new_cond_vi.name = "new__condition"
+    outputs_vi = [new_cond_vi]
+    for i in loop_outputs + external_inputs:
+      if i and i in vi_dict:
+        output_vi = vi_dict[i]
+      else:
+        output_vi = make_empty_tensor_value_info(i)
+      outputs_vi.append(output_vi)
+
+    loop_graph = make_graph(loop, "Loop_{}".format(self.loop_num_count),
+                            inputs_vi, outputs_vi)
+
+    input_dict = {i.name: i for i in loop_graph.input}
+    vi_dict.update(input_dict)
+
+    for n in loop_graph.node:
+      for i in n.input:
+        if i in input_dict:
+          continue
+        if i in init_dict:
+          loop_graph.initializer.append(init_dict.pop(i))
+        if i in vi_dict:
+          loop_graph.value_info.append(vi_dict.pop(i))
+        else:
+          pass
+      for i in n.output:
+        if i in ["new__{}".format(i) for i in [cond_tensor] + loop_inputs]:
+          output_i = onnx.ValueInfoProto()
+          output_i.MergeFrom(vi_dict[i.replace("new__", "")])
+          output_i.name = i
+          loop_graph.value_info.append(output_i)
+        if i in vi_dict:
+          loop_graph.value_info.append(vi_dict.pop(i))
+
+    loop_model = make_model(loop_graph)
+    new_loop_model = post_process(loop_model, True, True, True)
+
+    onnx.save(new_loop_model, "models/recog_loop.onnx")
+
+    return loop_model.graph
